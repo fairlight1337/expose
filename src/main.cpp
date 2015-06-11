@@ -12,12 +12,12 @@
 #include <errno.h>
 #include <list>
 #include <turbojpeg.h>
-#include <microhttpd.h>
 #include <byteswap.h>
 #include <mutex>
 #include <vector>
 
 #include <XHelper.h>
+#include <MHDHelper.h>
 
 
 int* g_nArgc;
@@ -29,9 +29,9 @@ std::vector<WindowCapture> vecWindowCaptures;
 const int JPEG_QUALITY = 75;
 const int COLOR_COMPONENTS = 3;
 
-struct MHD_Daemon* m_mhddDaemon;
 
 XHelper* xhlp;
+MHDHelper* mhdh;
 
 
 static int httpRequestCallback(void* cls, struct MHD_Connection* connection, const char* url, const char* method, const char* version, const char* upload_data, size_t* upload_data_size, void** con_cls) {
@@ -39,7 +39,7 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
   int ret;
   
   if(std::string(url) == "/window.jpg") {
-    std::string strIndex(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "index"));
+    std::string strIndex = mhdh->parameter(connection, "index");
     
     int nIndex;
     sscanf(strIndex.c_str(), "%d", &nIndex);
@@ -50,11 +50,11 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
       WindowCapture wc = vecWindowCaptures[nIndex];
       
       if(wc.ucData) {
-	response = MHD_create_response_from_buffer(wc.nSize, (void*)wc.ucData, MHD_RESPMEM_PERSISTENT);
-      
+	response = mhdh->createResponse(wc.ucData, wc.nSize);
+	
 	MHD_add_response_header(response, "Cache-Control", "no-store");
       } else {
-	response = MHD_create_response_from_buffer(0, (void*)"", MHD_RESPMEM_PERSISTENT);
+	response = mhdh->createResponse("");
       }
     }
     
@@ -62,9 +62,9 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
   } else if(std::string(url) == "/mousemove") {
     mtxPicture.lock();
     
-    std::string strX(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "x"));
-    std::string strY(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "y"));
-    std::string strIndex(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "index"));
+    std::string strX = mhdh->parameter(connection, "x");
+    std::string strY = mhdh->parameter(connection, "y");
+    std::string strIndex = mhdh->parameter(connection, "index");
     
     int nX, nY, nIndex;
     sscanf(strX.c_str(), "%d", &nX);
@@ -90,7 +90,7 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
   } else if(std::string(url) == "/mouseclick") {
     mtxPicture.lock();
     
-    std::string strIndex(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "index"));
+    std::string strIndex = mhdh->parameter(connection, "index");
     
     int nIndex;
     sscanf(strIndex.c_str(), "%d", &nIndex);
@@ -113,14 +113,14 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
       std::cerr << "Error" << std::endl;
     }
     
-    response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
+    response = mhdh->createResponse("200 OK");
     
     mtxPicture.unlock();
   } else if(std::string(url) == "/keydown") {
     mtxPicture.lock();
     
-    std::string strIndex(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "index"));
-    std::string strKeyCode(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "key"));
+    std::string strIndex = mhdh->parameter(connection, "index");
+    std::string strKeyCode = mhdh->parameter(connection, "key");
     
     int nIndex, nKeyCode;
     sscanf(strIndex.c_str(), "%d", &nIndex);
@@ -135,14 +135,14 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
       std::cerr << "Error" << std::endl;
     }
     
-    response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
+    response = mhdh->createResponse("200 OK");
     
     mtxPicture.unlock();
   } else if(std::string(url) == "/keyup") {
      mtxPicture.lock();
     
-    std::string strIndex(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "index"));
-    std::string strKeyCode(MHD_lookup_connection_value(connection, MHD_GET_ARGUMENT_KIND, "key"));
+    std::string strIndex = mhdh->parameter(connection, "index");
+    std::string strKeyCode = mhdh->parameter(connection, "key");
     
     int nIndex, nKeyCode;
     sscanf(strIndex.c_str(), "%d", &nIndex);
@@ -157,11 +157,11 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
       std::cerr << "Error" << std::endl;
     }
     
-    response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
+    response = mhdh->createResponse("200 OK");
     
     mtxPicture.unlock();
   } else {
-    const char* page = "\
+    response = mhdh->createResponse("\
 <html onkeydown=\"keydown(event);\" onkeyup=\"keyup(event);\">\n\
   <head>\n\
     <script>\n\
@@ -202,9 +202,7 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
   <body>\n\
     <img onmousemove=\"mousemove(event);\" onclick=\"mouseclick(event);\" id=\"img\" src=\"window.jpg?index=0\">\n\
   </body>\n\
-</html>";
-    
-    response = MHD_create_response_from_buffer(strlen(page), (void*)page, MHD_RESPMEM_PERSISTENT);
+</html>");
   }
   
   ret = MHD_queue_response(connection, MHD_HTTP_OK, response);
@@ -216,7 +214,6 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
 
 int main(int argc, char** argv) {
   int nReturnvalue = EXIT_FAILURE;
-  xhlp = new XHelper();
   
   if(argc == 1) {
     std::cerr << "Usage: " << argv[0] << " <command> [arguments]" << std::endl;
@@ -255,6 +252,9 @@ int main(int argc, char** argv) {
       }
     } else {
       // Parent
+      xhlp = new XHelper();
+      mhdh = new MHDHelper();
+      
       std::cout << "Got child with PID = " << pidFork << std::endl;
       
       std::vector<Window> vecWindowsMatching;
@@ -267,7 +267,7 @@ int main(int argc, char** argv) {
 	vecWindowCaptures[nI].ucData = NULL;
       }
       
-      m_mhddDaemon = MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, 8889, NULL, NULL, &httpRequestCallback, NULL, MHD_OPTION_END);
+      mhdh->setDaemonHandle(MHD_start_daemon(MHD_USE_SELECT_INTERNALLY, 8889, NULL, NULL, &httpRequestCallback, NULL, MHD_OPTION_END));
       
       // Endless loop, capturing the window
       while(true) {
@@ -304,17 +304,16 @@ int main(int argc, char** argv) {
 	
 	usleep(10000);
       }
+      
+      delete xhlp;
+      delete mhdh;
     }
-    
-    MHD_stop_daemon(m_mhddDaemon);
     
     munmap(g_nArgc, sizeof *g_nArgc);
     munmap(g_carrArgv, sizeof *g_carrArgv);
     
     nReturnvalue = EXIT_SUCCESS;
   }
-  
-  delete xhlp;
   
   return nReturnvalue;
 }
