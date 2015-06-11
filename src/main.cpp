@@ -9,12 +9,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <string.h>
 #include <errno.h>
-#include <X11/Xlib.h>
-#include <X11/Xatom.h>
-#include <X11/X.h>
-#include <X11/Xutil.h>
 #include <list>
 #include <turbojpeg.h>
 #include <microhttpd.h>
@@ -22,19 +17,11 @@
 #include <mutex>
 #include <vector>
 
-
-typedef struct {
-  int nWidth;
-  int nHeight;
-  unsigned char* ucData;
-  int nSize;
-  Window winXWindow;
-} WindowCapture;
+#include <XHelper.h>
 
 
 int* g_nArgc;
 char*** g_carrArgv;
-Display* g_dspDisplay;
 
 std::mutex mtxPicture;
 std::vector<WindowCapture> vecWindowCaptures;
@@ -44,70 +31,7 @@ const int COLOR_COMPONENTS = 3;
 
 struct MHD_Daemon* m_mhddDaemon;
 
-
-KeyCode toKeyCode(int nKeyCode) {
-  unsigned int unUse = 0x0;
-  
-  switch(nKeyCode) {
-  case 37: // left
-    unUse = XK_Left;
-    break;
-      
-  case 38: // up
-    unUse = XK_Up;
-    break;
-      
-  case 39: // right
-    unUse = XK_Right;
-    break;
-    
-  case 40: // down
-    unUse = XK_Down;
-    break;
-    
-  case 13: // enter
-    unUse = XK_Return;
-    break;
-    
-  case 27: // escape
-    unUse = XK_Escape;
-    break;
-    
-  default: // everything else
-    unUse = nKeyCode;
-    break;
-  }
-  std::cout << nKeyCode << std::endl;
-  return XKeysymToKeycode(g_dspDisplay, unUse);
-}
-
-
-Window subWindow(Window winWindow, bool& bSuccess) {
-  Window winRoot, winParent;
-  Window* winChildren;
-  unsigned int nNumChildren;
-  
-  XQueryTree(g_dspDisplay, winWindow, &winRoot, &winParent, &winChildren, &nNumChildren);
-  
-  Window winReturn = winWindow;
-  
-  if(winChildren) {
-    winReturn = winChildren[0];
-    XFree(winChildren);
-    bSuccess = true;
-  } else {
-    bSuccess = false;
-  }
-  
-  return winReturn;
-}
-
-
-Window subWindow(Window winWindow) {
-  bool bSuccess;
-  
-  return subWindow(winWindow, bSuccess);
-}
+XHelper* xhlp;
 
 
 static int httpRequestCallback(void* cls, struct MHD_Connection* connection, const char* url, const char* method, const char* version, const char* upload_data, size_t* upload_data_size, void** con_cls) {
@@ -149,27 +73,16 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
     
     Window winXWindow = vecWindowCaptures[nIndex].winXWindow;
     
-    XEvent evtEvent;
-    memset(&evtEvent, 0x00, sizeof(evtEvent));
-    
-    evtEvent.type = MotionNotify;
+    XEvent evtEvent = xhlp->createEvent(MotionNotify);
     evtEvent.xmotion.x = nX;
     evtEvent.xmotion.y = nY;
     evtEvent.xmotion.same_screen = True;
-    evtEvent.xmotion.subwindow = DefaultRootWindow(g_dspDisplay);
+    evtEvent.xmotion.subwindow = xhlp->rootWindow();
     evtEvent.xmotion.send_event = True;
     
-    if(XSendEvent(g_dspDisplay, winXWindow, False, 0xfff, &evtEvent) == 0) {
+    if(!xhlp->sendAdvancedEvent(winXWindow, &evtEvent)) {
       std::cerr << "Error" << std::endl;
     }
-    
-    XFlush(g_dspDisplay);
-    
-    if(XSendEvent(g_dspDisplay, subWindow(winXWindow), False, 0xfff, &evtEvent) == 0) {
-      std::cerr << "Error" << std::endl;
-    }
-    
-    XFlush(g_dspDisplay);
     
     response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
     
@@ -184,35 +97,21 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
     
     Window winXWindow = vecWindowCaptures[nIndex].winXWindow;
     
-    XEvent evtEvent;
-    memset(&evtEvent, 0x00, sizeof(evtEvent));
-    
-    evtEvent.type = ButtonPress;
+    XEvent evtEvent = xhlp->createEvent(ButtonPress);
     evtEvent.xbutton.button = 1;
     
-    if(XSendEvent(g_dspDisplay, winXWindow, False, 0xfff, &evtEvent) == 0) {
+    if(!xhlp->sendAdvancedEvent(winXWindow, &evtEvent)) {
       std::cerr << "Error" << std::endl;
     }
     
-    if(XSendEvent(g_dspDisplay, subWindow(winXWindow), False, 0xfff, &evtEvent) == 0) {
-      std::cerr << "Error" << std::endl;
-    }
-    
-    XFlush(g_dspDisplay);
     usleep(10000);
     
     evtEvent.type = ButtonRelease;
     evtEvent.xbutton.state = 0x100;
     
-    if(XSendEvent(g_dspDisplay, winXWindow, False, 0xfff, &evtEvent) == 0) {
+    if(!xhlp->sendAdvancedEvent(winXWindow, &evtEvent)) {
       std::cerr << "Error" << std::endl;
     }
-    
-    if(XSendEvent(g_dspDisplay, subWindow(winXWindow), False, 0xfff, &evtEvent) == 0) {
-      std::cerr << "Error" << std::endl;
-    }
-    
-    XFlush(g_dspDisplay);
     
     response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
     
@@ -229,23 +128,12 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
     
     Window winXWindow = vecWindowCaptures[nIndex].winXWindow;
     
-    XEvent evtEvent;
-    memset(&evtEvent, 0x00, sizeof(evtEvent));
+    XEvent evtEvent = xhlp->createEvent(KeyPress);
+    evtEvent.xkey.keycode = xhlp->X11KeyCode(nKeyCode);
     
-    evtEvent.type = KeyPress;
-    evtEvent.xkey.keycode = toKeyCode(nKeyCode);
-    
-    if(XSendEvent(g_dspDisplay, winXWindow, False, 0xfff, &evtEvent) == 0) {
+    if(!xhlp->sendAdvancedEvent(winXWindow, &evtEvent)) {
       std::cerr << "Error" << std::endl;
     }
-    
-    XFlush(g_dspDisplay);
-    
-    if(XSendEvent(g_dspDisplay, subWindow(winXWindow), False, 0xfff, &evtEvent) == 0) {
-      std::cerr << "Error" << std::endl;
-    }
-    
-    XFlush(g_dspDisplay);
     
     response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
     
@@ -262,21 +150,12 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
     
     Window winXWindow = vecWindowCaptures[nIndex].winXWindow;
     
-    XEvent evtEvent;
-    memset(&evtEvent, 0x00, sizeof(evtEvent));
+    XEvent evtEvent = xhlp->createEvent(KeyRelease);
+    evtEvent.xkey.keycode = xhlp->X11KeyCode(nKeyCode);
     
-    evtEvent.type = KeyRelease;
-    evtEvent.xkey.keycode = toKeyCode(nKeyCode);
-    
-    if(XSendEvent(g_dspDisplay, winXWindow, False, 0xfff, &evtEvent) == 0) {
+    if(!xhlp->sendAdvancedEvent(winXWindow, &evtEvent)) {
       std::cerr << "Error" << std::endl;
     }
-    
-    if(XSendEvent(g_dspDisplay, subWindow(winXWindow), False, 0xfff, &evtEvent) == 0) {
-      std::cerr << "Error" << std::endl;
-    }
-    
-    XFlush(g_dspDisplay);
     
     response = MHD_create_response_from_buffer(6, (void*)"200 OK", MHD_RESPMEM_PERSISTENT);
     
@@ -335,109 +214,12 @@ static int httpRequestCallback(void* cls, struct MHD_Connection* connection, con
 }
 
 
-WindowCapture captureWindow(Display* dspDisplay, Window winCapture) {
-  WindowCapture wc;
-  winCapture = subWindow(winCapture);
-  
-  XWindowAttributes gwa;
-  XGetWindowAttributes(dspDisplay, winCapture, &gwa);
-  
-  wc.nWidth = gwa.width;
-  wc.nHeight = gwa.height;
-  wc.ucData = new unsigned char[wc.nWidth * wc.nHeight * 3];
-  
-  XImage* ximgImage = XGetImage(dspDisplay, winCapture, 0, 0, wc.nWidth, wc.nHeight, AllPlanes, ZPixmap);
-  
-  unsigned long ulMaskRed = ximgImage->red_mask;
-  unsigned long ulMaskGreen = ximgImage->green_mask;
-  unsigned long ulMaskBlue = ximgImage->blue_mask;
-  
-  for(int nX = 0; nX < wc.nWidth; nX++) {
-    for(int nY = 0; nY < wc.nHeight; nY++) {
-      unsigned long ulPixel = XGetPixel(ximgImage, nX, nY);
-      
-      unsigned char ucRed = (ulPixel & ulMaskRed) >> 16;
-      unsigned char ucGreen = (ulPixel & ulMaskGreen) >> 8;
-      unsigned char ucBlue = (ulPixel & ulMaskBlue);
-      
-      wc.ucData[(nX + nY * wc.nWidth) * 3 + 0] = ucRed;
-      wc.ucData[(nX + nY * wc.nWidth) * 3 + 1] = ucGreen;
-      wc.ucData[(nX + nY * wc.nWidth) * 3 + 2] = ucBlue;
-    }
-  }
-  
-  return wc;
-}
-
-std::vector<Window> findXWindowForPID(Display* dspDisplay, Window winParent, pid_t pidFind) {
-  std::vector<Window> vecWindowsMatching;
-  
-  Atom atomPID = XInternAtom(dspDisplay, "_NET_WM_PID", True);
-  
-  Atom type;
-  int format;
-  unsigned long nItems;
-  unsigned long bytesAfter;
-  unsigned char* propPID = 0;
-  
-  if(Success == XGetWindowProperty(dspDisplay, winParent, atomPID, 0, 1, False, XA_CARDINAL, &type, &format, &nItems, &bytesAfter, &propPID)) {
-    if(propPID != 0) {
-      if(pidFind == *((unsigned long*)propPID)) {
-	vecWindowsMatching.push_back(winParent);
-      }
-      
-      XFree(propPID);
-    }
-  }
-  
-  Window wRoot;
-  Window wParent;
-  Window* wChild;
-  unsigned nChildren;
-  
-  if(0 != XQueryTree(dspDisplay, winParent, &wRoot, &wParent, &wChild, &nChildren)) {
-    for(int nI = 0; nI < nChildren; nI++) {
-      std::vector<Window> vecTemp = findXWindowForPID(dspDisplay, wChild[nI], pidFind);
-      
-      for(Window winTemp : vecTemp) {
-	vecWindowsMatching.push_back(winTemp);
-      }
-    }
-  }
-  
-  return vecWindowsMatching;
-}
-
-
-void printWindowStructure(Window winWindow, int nLevel = 0) {
-  std::string strIndent = "";
-  for(int nI = 0; nI < nLevel; nI++) {
-    strIndent += "  ";
-  }
-  
-  std::cout << strIndent << "Window" << std::endl;
-  
-  Window winRoot, winParent;
-  Window* winChildren;
-  unsigned int nNumChildren;
-  
-  XQueryTree(g_dspDisplay, winWindow, &winRoot, &winParent, &winChildren, &nNumChildren);
-  
-  for(int nI = 0; nI < nNumChildren; nI++) {
-    printWindowStructure(winChildren[nI], nLevel + 1);
-  }
-  
-  if(winChildren) {
-    XFree(winChildren);
-  }
-}
-
-
 int main(int argc, char** argv) {
+  int nReturnvalue = EXIT_FAILURE;
+  xhlp = new XHelper();
+  
   if(argc == 1) {
     std::cerr << "Usage: " << argv[0] << " <command> [arguments]" << std::endl;
-    
-    return EXIT_FAILURE;
   } else {
     g_nArgc = (int*)mmap(NULL, sizeof *g_nArgc, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
     *g_nArgc = argc;
@@ -473,35 +255,10 @@ int main(int argc, char** argv) {
       }
     } else {
       // Parent
-      XInitThreads();
-      
       std::cout << "Got child with PID = " << pidFork << std::endl;
       
-      g_dspDisplay = XOpenDisplay(0);
-      
-      XSetWindowAttributes attributes;
-      attributes.event_mask = SubstructureNotifyMask | StructureNotifyMask;
-      XChangeWindowAttributes(g_dspDisplay, XDefaultRootWindow(g_dspDisplay), CWEventMask, &attributes);
-      
       std::vector<Window> vecWindowsMatching;
-      
-      // Wait for a window to be mapped
-      bool bRun = true;
-      
-      while(bRun) {
-	XEvent evtEvent;
-	XNextEvent(g_dspDisplay, &evtEvent);
-	
-	if(evtEvent.type == MapNotify) {
-	  vecWindowsMatching.push_back(evtEvent.xmap.window);
-	  
-	  bRun = false;
-	}
-	
-	usleep(10000);
-      }
-      
-      //std::vector<Window> vecWindowsMatching = findXWindowForPID(g_dspDisplay, XDefaultRootWindow(g_dspDisplay), pidFork);
+      vecWindowsMatching.push_back(xhlp->getNextMappedWindow());
       
       std::cout << "Found " << vecWindowsMatching.size() << " window(s)" << std::endl;
       vecWindowCaptures.resize(vecWindowsMatching.size());
@@ -516,7 +273,7 @@ int main(int argc, char** argv) {
       while(true) {
 	for(int nI = 0; nI < vecWindowsMatching.size(); nI++) {
 	  Window winCapture = vecWindowsMatching[nI];
-	  WindowCapture wc = captureWindow(g_dspDisplay, winCapture);
+	  WindowCapture wc = xhlp->captureWindow(winCapture);
 	  
 	  unsigned char* compressedImage = NULL;
 	  long unsigned int _jpegSize = 0;
@@ -547,8 +304,6 @@ int main(int argc, char** argv) {
 	
 	usleep(10000);
       }
-      
-      XCloseDisplay(g_dspDisplay);
     }
     
     MHD_stop_daemon(m_mhddDaemon);
@@ -556,6 +311,10 @@ int main(int argc, char** argv) {
     munmap(g_nArgc, sizeof *g_nArgc);
     munmap(g_carrArgv, sizeof *g_carrArgv);
     
-    return EXIT_SUCCESS;
+    nReturnvalue = EXIT_SUCCESS;
   }
+  
+  delete xhlp;
+  
+  return nReturnvalue;
 }
